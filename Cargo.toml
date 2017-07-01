@@ -1,0 +1,15 @@
+[package]
+name = "rds-tensors"
+version = "0.1.0"
+authors = ["Charles Hubain <github@haxelion.eu>"]
+description = "Rust Data Science Tensors crate"
+categories = ["science", "data-structures"]
+documentation = "https://docs.rs/rds-tensors"
+homepage = "https://github.com/haxelion/rds-tensors"
+repository = "https://github.com/haxelion/rds-tensors"
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "haxelion/rds-tensors" }
+
+[dependencies]
