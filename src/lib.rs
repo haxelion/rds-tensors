@@ -8,6 +8,10 @@ pub mod tindex;
 use types::{RDSType, RDSTyped, CastTo, CastFrom, Complex, c32, c64};
 use tindex::TIndex;
 
+/***************************************************************************************************
+                                               TRAITS
+***************************************************************************************************/
+
 pub trait Tensor<T: RDSTyped> : Sized {
 
     fn from_scalar<R: AsRef<[usize]>>(shape: R, s: T) -> Self;
@@ -24,6 +28,10 @@ pub trait Tensor<T: RDSTyped> : Sized {
 
     fn from_slice<R: AsRef<[usize]>, S: AsRef<[T]>>(shape: R, slice: S) -> Self;
 
+    fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self;
+
+    fn into_boxed_slice(self) -> Box<[T]>;
+
     fn dim(&self) -> usize;
 
     fn shape(&self) -> &[usize];
@@ -37,26 +45,38 @@ pub trait Tensor<T: RDSTyped> : Sized {
     fn get_raw_array(&self) -> &[T];
 
     fn get_raw_array_mut(&mut self) -> &mut [T];
+
+    fn reshape_into_vector<R: AsRef<[usize]>>(self, shape: R) -> Vector<T> {
+        return Vector::from_boxed_slice(shape, self.into_boxed_slice());
+    }
+
+    fn reshape_into_matrix<R: AsRef<[usize]>>(self, shape: R) -> Matrix<T> {
+        return Matrix::from_boxed_slice(shape, self.into_boxed_slice());
+    }
+
+    fn reshape_into_tensor<R: AsRef<[usize]>>(self, shape: R) -> TensorN<T> {
+        return TensorN::from_boxed_slice(shape, self.into_boxed_slice());
+    }
 }
+
+fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
+    let mut strides: Vec<usize> = repeat(0usize).take(shape.len()).collect();
+    let mut size = 1;
+    for i in 0..shape.len()  {
+        strides[shape.len()-i-1] = size;
+        size *= shape[shape.len()-i-1];
+    }
+    return strides;
+}
+
+/***************************************************************************************************
+                                               VECTOR
+***************************************************************************************************/
 
 pub struct Vector<T: RDSTyped> {
     data: Box<[T]>,
     shape: Vec<usize>,
     strides: Vec<usize>
-}
-
-impl<T: RDSTyped> Vector<T> {
-    pub fn from_boxed_slice(data: Box<[T]>) -> Self  {
-        Vector {
-            shape: vec![data.len()],
-            data: data,
-            strides: vec![1]
-        }
-    }
-
-    pub fn into_boxed_slice(self) -> Box<[T]> {
-        return self.data;
-    }
 }
 
 impl<T: RDSTyped> Tensor<T> for Vector<T> {
@@ -72,10 +92,7 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     }
 
     fn from_slice<R: AsRef<[usize]>, S: AsRef<[T]>>(shape: R, slice: S) -> Self {
-        let shape = shape.as_ref();
-        assert!(shape.len() == 1, "Vector::from_slice(): provided shape has more than one dimension");
-        assert!(shape[0] == slice.as_ref().len(), "Vector::from_slice(): provided shape and slice does not have the same number of elements");
-        return Self::from_boxed_slice(slice.as_ref().to_vec().into_boxed_slice());
+        return Self::from_boxed_slice(shape, slice.as_ref().to_vec().into_boxed_slice());
     }
 
     fn from_tensor<W: Tensor<S>, S: RDSTyped + CastTo<T>>(tensor: &W) -> Self {
@@ -87,6 +104,21 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
             data: data.into_boxed_slice(),
             strides: vec![1]
         }
+    }
+
+    fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
+        let shape = shape.as_ref();
+        assert!(shape.len() == 1, "Vector::from_boxed_slice(): provided shape has more than one dimension");
+        assert!(shape[0] == data.len(), "Vector::from_boxed_slice(): provided shape and slice do not have the same number of elements");
+        Vector {
+            shape: vec![data.len()],
+            data: data,
+            strides: vec![1]
+        }
+    }
+
+    fn into_boxed_slice(self) -> Box<[T]> {
+        return self.data;
     }
 
     fn dim(&self) -> usize { 
@@ -136,27 +168,14 @@ impl<I,T> IndexMut<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
     }
 }
 
+/***************************************************************************************************
+                                               MATRIX
+***************************************************************************************************/
+
 pub struct Matrix<T: RDSTyped> {
     data: Box<[T]>,
     shape: Vec<usize>,
     strides: Vec<usize>
-}
-
-impl<T: RDSTyped> Matrix<T> {
-    pub fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
-        let shape = shape.as_ref();
-        assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape has more than two dimensions");
-        assert!(shape[0] * shape[1] == data.len(), "Matrix::from_boxed_slice(): provided data and shape does not have the same number of elements");
-        Matrix {
-            data: data,
-            shape: shape.to_vec(),
-            strides: vec![shape[1], 1]
-        }
-    }
-
-    pub fn into_boxed_slice(self) -> Box<[T]> {
-        return self.data;
-    }
 }
 
 impl<T: RDSTyped> Tensor<T> for Matrix<T> {
@@ -192,6 +211,21 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
 
     fn from_slice<R: AsRef<[usize]>, S: AsRef<[T]>>(shape: R, slice: S) -> Self {
         return Self::from_boxed_slice(shape, slice.as_ref().to_vec().into_boxed_slice());
+    }
+
+    fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
+        let shape = shape.as_ref();
+        assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape has more than two dimensions");
+        assert!(shape[0] * shape[1] == data.len(), "Matrix::from_boxed_slice(): provided data and shape does not have the same number of elements");
+        Matrix {
+            data: data,
+            shape: shape.to_vec(),
+            strides: vec![shape[1], 1]
+        }
+    }
+
+    fn into_boxed_slice(self) -> Box<[T]> {
+        return self.data;
     }
 
     fn dim(&self) -> usize { 
@@ -243,44 +277,20 @@ impl<I,T> IndexMut<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
     }
 }
 
+/***************************************************************************************************
+                                               TENSORN
+***************************************************************************************************/
+
 pub struct TensorN<T: RDSTyped> {
     data: Box<[T]>,
     shape: Vec<usize>,
     strides: Vec<usize>
 }
 
-impl<T: RDSTyped> TensorN<T> {
-    fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
-        let mut strides: Vec<usize> = repeat(0usize).take(shape.len()).collect();
-        let mut size = 1;
-        for i in 0..shape.len()  {
-            strides[shape.len()-i-1] = size;
-            size *= shape[shape.len()-i-1];
-        }
-        return strides;
-    }
-
-    pub fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
-        let shape = shape.as_ref();
-        let strides = Self::shape_to_strides(shape);
-        assert!(strides[0] * shape[0] == data.len(), "TensorN::from_boxed_slice(): provided data and shape does not have the same number of elements");
-        TensorN {
-            data: data,
-            shape: shape.to_vec(),
-            strides: strides
-        }
-    }
-
-    pub fn into_boxed_slice(self) -> Box<[T]> {
-        return self.data;
-    }
-
-}
-
 impl<T: RDSTyped> Tensor<T> for TensorN<T> {
     fn from_scalar<R: AsRef<[usize]>>(shape: R, s: T) -> Self {
         let shape = shape.as_ref();
-        let strides = Self::shape_to_strides(shape);
+        let strides = shape_to_strides(shape);
         let size = strides[0] * shape[0];
         let data: Vec<T> = repeat(s).take(size).collect();
         TensorN {
@@ -301,6 +311,21 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
 
     fn from_slice<R: AsRef<[usize]>, S: AsRef<[T]>>(shape: R, slice: S) -> Self {
         return Self::from_boxed_slice(shape, slice.as_ref().to_vec().into_boxed_slice());
+    }
+
+    fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
+        let shape = shape.as_ref();
+        let strides = shape_to_strides(shape);
+        assert!(strides[0] * shape[0] == data.len(), "TensorN::from_boxed_slice(): provided data and shape does not have the same number of elements");
+        TensorN {
+            data: data,
+            shape: shape.to_vec(),
+            strides: strides
+        }
+    }
+
+    fn into_boxed_slice(self) -> Box<[T]> {
+        return self.data;
     }
 
     fn dim(&self) -> usize { 
