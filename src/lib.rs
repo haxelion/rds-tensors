@@ -5,7 +5,7 @@ use std::ops::{Index, IndexMut};
 pub mod types;
 pub mod tindex;
 
-use types::{RDSType, RDSTyped, CastTo, CastFrom, Complex, c32, c64};
+use types::{RDSType, RDSTyped, CastTo};
 use tindex::TIndex;
 
 /***************************************************************************************************
@@ -34,6 +34,10 @@ pub trait Tensor<T: RDSTyped> : Sized {
 
     fn dim(&self) -> usize;
 
+    fn effective_dim(&self) -> usize {
+        self.shape().iter().fold(self.dim(), |acc, &i| acc - (i == 1) as usize)
+    }
+
     fn shape(&self) -> &[usize];
 
     fn strides(&self) -> &[usize]; 
@@ -57,6 +61,8 @@ pub trait Tensor<T: RDSTyped> : Sized {
     fn reshape_into_tensor<R: AsRef<[usize]>>(self, shape: R) -> TensorN<T> {
         return TensorN::from_boxed_slice(shape, self.into_boxed_slice());
     }
+
+    fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W);
 }
 
 fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
@@ -74,7 +80,7 @@ fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
 ***************************************************************************************************/
 
 pub struct Vector<T: RDSTyped> {
-    data: Box<[T]>,
+    data: Vec<T>,
     shape: Vec<usize>,
     strides: Vec<usize>
 }
@@ -85,7 +91,7 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
         assert!(shape.len() == 1, "Vector::from_scalar(): provided shape has more than one dimension");
         let data: Vec<T> = repeat(s).take(shape[0]).collect();
         Vector {
-            data: data.into_boxed_slice(),
+            data: data,
             shape: vec![shape[0]],
             strides: vec![1]
         }
@@ -96,12 +102,11 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     }
 
     fn from_tensor<W: Tensor<S>, S: RDSTyped + CastTo<T>>(tensor: &W) -> Self {
-        assert!(tensor.shape().iter().fold(tensor.dim(), |acc, &i| acc - (i == 1) as usize) <= 1, 
-                "Vector::from_tensor(): provided tensor has more than one non-unit dimension");
+        assert!(tensor.effective_dim() <= 1,  "Vector::from_tensor(): provided tensor has more than one non-unit dimension");
         let data: Vec<T> = tensor.get_raw_array().iter().map(|&i| i.cast_to()).collect();
         Vector {
             shape: vec![data.len()],
-            data: data.into_boxed_slice(),
+            data: data,
             strides: vec![1]
         }
     }
@@ -112,13 +117,13 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
         assert!(shape[0] == data.len(), "Vector::from_boxed_slice(): provided shape and slice do not have the same number of elements");
         Vector {
             shape: vec![data.len()],
-            data: data,
+            data: data.into_vec(),
             strides: vec![1]
         }
     }
 
     fn into_boxed_slice(self) -> Box<[T]> {
-        return self.data;
+        return self.data.into_boxed_slice();
     }
 
     fn dim(&self) -> usize { 
@@ -148,6 +153,27 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     fn get_raw_array_mut(&mut self) -> &mut [T] {
         self.data.borrow_mut()
     }
+
+    fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
+        assert!(dim == 0, "Vector::insert(): insertion dimension should be 0");
+        assert!(pos <= self.shape[0], "Vector::insert(): insertion position is out of bound");
+        assert!(tensor.dim() == 1 , "Vector::insert(): tensor to insert is not one dimensional");
+        // Make self the right size
+        self.data.reserve(tensor.size());
+        // Write the extended part coming from tensor
+        self.data.extend_from_slice(&tensor.get_raw_array()[(self.shape[0]-pos)..(tensor.size())]);
+        // Write the extended part coming from self
+        for i in pos..self.shape[0] {
+            let t = self.data[i];
+            self.data.push(t);
+        }
+        // Write the replaced part
+        let tensor_data = tensor.get_raw_array();
+        for i in pos..self.shape[0] {
+            self.data[i] = tensor_data[i-pos];
+        }
+        self.shape[0] += tensor.size();
+    }
 }
 
 impl<I,T> Index<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
@@ -173,7 +199,7 @@ impl<I,T> IndexMut<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
 ***************************************************************************************************/
 
 pub struct Matrix<T: RDSTyped> {
-    data: Box<[T]>,
+    data: Vec<T>,
     shape: Vec<usize>,
     strides: Vec<usize>
 }
@@ -184,20 +210,20 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         assert!(shape.len() == 2, "Matrix::from_scalar(): provided shape is not two dimensional");
         let data: Vec<T> = repeat(s).take(shape[0]*shape[1]).collect();
         Matrix {
-            data: data.into_boxed_slice(),
+            data: data,
             shape: shape.to_vec(),
             strides: vec![shape[1], 1]
         }
     }
 
     fn from_tensor<W: Tensor<S>, S: RDSTyped + CastTo<T>>(tensor: &W) -> Self {
+        assert!(tensor.effective_dim() <= 2, "Matrix::from_tensor(): provided tensor has more than two non-unit dimensions");
         let mut shape = Vec::<usize>::with_capacity(2);
         for l in tensor.shape() {
             if *l > 1 {
                 shape.push(*l);
             }
         }
-        assert!(shape.len() <= 2, "Matrix::from_tensor(): provided tensor has more than two non-unit dimensions");
         while shape.len() < 2 {
             shape.push(1);
         }
@@ -205,7 +231,7 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         Matrix {
             strides: vec![shape[1], 1],
             shape: shape,
-            data: data.into_boxed_slice()
+            data: data
         }
     }
 
@@ -218,14 +244,14 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape has more than two dimensions");
         assert!(shape[0] * shape[1] == data.len(), "Matrix::from_boxed_slice(): provided data and shape does not have the same number of elements");
         Matrix {
-            data: data,
+            data: data.into_vec(),
             shape: shape.to_vec(),
             strides: vec![shape[1], 1]
         }
     }
 
     fn into_boxed_slice(self) -> Box<[T]> {
-        return self.data;
+        return self.data.into_boxed_slice();
     }
 
     fn dim(&self) -> usize { 
@@ -255,6 +281,61 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
     fn get_raw_array_mut(&mut self) -> &mut [T] {
         self.data.borrow_mut()
     }
+
+    fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
+        assert!(dim <= 1, "Matrix::insert(): insertion dimension should be 0 or 1");
+        assert!(pos <= self.shape[dim], "Matrix::insert(): insertion position is out of bound");
+        assert!(tensor.dim() == 2 , "Matrix::insert(): tensor to insert is not two dimensional");
+        // dim^1 will produce the dimension orthogonal to the insertion dimension (dim)
+        assert!(self.shape[dim^1] == tensor.shape()[dim^1], "Matrix::insert(): tensor to insert has an incompatible shape");
+        let mut idx_src_self = self.data.len();
+        // Make self the right size
+        self.data.reserve(tensor.size());
+        for _ in 0..tensor.size() {
+            self.data.push(T::cast_from(0u8));
+        }
+        // Back to front zipping parameter init
+        let length = tensor.shape()[1];
+        let count = tensor.shape()[0];
+        let stride = match dim {
+            0 => length,
+            1 => self.shape[1] + length,
+            _ => unreachable!()
+        };
+        let offset = match dim {
+            0 => (self.shape[0] - pos) * self.shape[1],
+            1 => self.shape[1] - pos,
+            _ => unreachable!()
+        };
+        // Back to front zipping
+        let mut idx_dest = self.data.len();
+        let mut idx_src_tensor = tensor.size();
+        let tensor_data = tensor.get_raw_array();
+        for _ in 0..offset {
+            idx_dest -= 1;
+            idx_src_self -= 1;
+            self.data[idx_dest] = self.data[idx_src_self];
+        }
+        for _ in 0..length {
+            idx_dest -= 1;
+            idx_src_tensor -= 1;
+            self.data[idx_dest] = tensor_data[idx_src_tensor];
+        }
+        for _ in 1..count {
+            for _ in length..stride {
+                idx_dest -= 1;
+                idx_src_self -= 1;
+                self.data[idx_dest] = self.data[idx_src_self];
+            }
+            for _ in 0..length {
+                idx_dest -= 1;
+                idx_src_tensor -= 1;
+                self.data[idx_dest] = tensor_data[idx_src_tensor];
+            }
+        }
+        self.shape[dim] += tensor.shape()[dim];
+        self.strides = shape_to_strides(self.shape());
+    }
 }
 
 impl<I,T> Index<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
@@ -282,7 +363,7 @@ impl<I,T> IndexMut<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
 ***************************************************************************************************/
 
 pub struct TensorN<T: RDSTyped> {
-    data: Box<[T]>,
+    data: Vec<T>,
     shape: Vec<usize>,
     strides: Vec<usize>
 }
@@ -294,7 +375,7 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         let size = strides[0] * shape[0];
         let data: Vec<T> = repeat(s).take(size).collect();
         TensorN {
-            data: data.into_boxed_slice(),
+            data: data,
             shape: shape.to_vec(),
             strides: strides
         }
@@ -304,7 +385,7 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         let data: Vec<T> = tensor.get_raw_array().iter().map(|&i| i.cast_to()).collect();
         TensorN {
             shape: tensor.shape().to_vec(),
-            data: data.into_boxed_slice(),
+            data: data,
             strides: tensor.strides().to_vec()
         }
     }
@@ -318,14 +399,14 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         let strides = shape_to_strides(shape);
         assert!(strides[0] * shape[0] == data.len(), "TensorN::from_boxed_slice(): provided data and shape does not have the same number of elements");
         TensorN {
-            data: data,
+            data: data.into_vec(),
             shape: shape.to_vec(),
             strides: strides
         }
     }
 
     fn into_boxed_slice(self) -> Box<[T]> {
-        return self.data;
+        return self.data.into_boxed_slice();
     }
 
     fn dim(&self) -> usize { 
@@ -354,6 +435,12 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
 
     fn get_raw_array_mut(&mut self) -> &mut [T] {
         self.data.borrow_mut()
+    }
+
+    #[allow(unused_variables)]
+    fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
+        // TODO
+        panic!("TensorN::insert not implemented");
     }
 }
 

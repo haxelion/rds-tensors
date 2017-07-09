@@ -159,4 +159,35 @@ fn cast_dimensionnality() {
     }
 }
 
+#[test]
+fn vector_insert() {
+    let mut v = Vector::<f32>::zeros([0]);
+    let v1 = Vector::<f32>::from_slice([3], [6.0, 7.0, 8.0]);
+    let v2 = Vector::<f32>::from_slice([3], [0.0, 1.0, 2.0]);
+    let v3 = Vector::<f32>::from_slice([3], [3.0, 4.0, 5.0]);
+    v.insert(0, 0, &v1);
+    v.insert(0, 0, &v2);
+    v.insert(0, 3, &v3); 
+    for i in 0..9 {
+        assert!(v[[i]] == i as f32);
+    }
+}
+
+#[test]
+fn matrix_insert() {
+    let mut m = Matrix::<f32>::zeros([3, 0]);
+    let m1 = Matrix::<f32>::from_slice([3, 1], [0.0, 1.0, 4.0]);
+    let m2 = Matrix::<f32>::from_slice([3, 2], [0.1, 0.4, 1.1, 1.4, 4.1, 4.4]);
+    let m3 = Matrix::<f32>::from_slice([2, 3], [2.0, 2.1, 2.4, 3.0, 3.1, 3.4]);
+    let m4 = Matrix::<f32>::from_slice([5, 2], [0.2, 0.3, 1.2, 1.3, 2.2, 2.3, 3.2, 3.3, 4.2, 4.3]);
+    m.insert(1, 0, &m1); 
+    m.insert(1, 1, &m2);
+    m.insert(0, 2, &m3);
+    m.insert(1, 2, &m4); 
+    for i in 0..5 {
+        for j in 0..5 {
+            assert!(m[[i,j]] == i as f32 + (j as f32) / 10.0);
+        }
+    }
+}
 
