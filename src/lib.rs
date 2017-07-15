@@ -297,9 +297,9 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         // Back to front zipping parameter init
         let length = tensor.shape()[1];
         let count = tensor.shape()[0];
-        let stride = match dim {
-            0 => length,
-            1 => self.shape[1] + length,
+        let spacing = match dim {
+            0 => 0,
+            1 => self.shape[1],
             _ => unreachable!()
         };
         let offset = match dim {
@@ -322,7 +322,7 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
             self.data[idx_dest] = tensor_data[idx_src_tensor];
         }
         for _ in 1..count {
-            for _ in length..stride {
+            for _ in 0..spacing {
                 idx_dest -= 1;
                 idx_src_self -= 1;
                 self.data[idx_dest] = self.data[idx_src_self];
@@ -437,10 +437,53 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         self.data.borrow_mut()
     }
 
-    #[allow(unused_variables)]
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
-        // TODO
-        panic!("TensorN::insert not implemented");
+        assert!(dim < self.dim(), "TensorN::insert(): insertion dimension should be 0 or 1");
+        assert!(pos <= self.shape[dim], "TensorN::insert(): insertion position is out of bound");
+        assert!(tensor.dim() == self.dim() , "TensorN::insert(): tensor has a different dimensionality than self");
+        for i in 0..self.shape.len() {
+            assert!((dim == i) || (self.shape[i] == tensor.shape()[i]), "TensorN::insert(): tensor shape doesn't match with self shape in the non-insertion dimensions");
+        }
+
+        let mut idx_src_self = self.data.len();
+        // Make self the right size
+        self.data.reserve(tensor.size());
+        for _ in 0..tensor.size() {
+            self.data.push(T::cast_from(0u8));
+        }
+        // Back to front zipping parameter init
+        let length = tensor.shape()[dim..].iter().fold(1usize, |acc, &x| acc*x);
+        let count = tensor.shape()[..dim].iter().fold(1usize, |acc, &x| acc*x);
+        let spacing = self.shape[dim..].iter().fold(1usize, |acc, &x| acc*x);
+        let offset = (self.shape[dim] - pos) * self.shape[dim+1..].iter().fold(1usize, |acc, &x| acc*x);
+        // Back to front zipping
+        let mut idx_dest = self.data.len();
+        let mut idx_src_tensor = tensor.size();
+        let tensor_data = tensor.get_raw_array();
+        for _ in 0..offset {
+            idx_dest -= 1;
+            idx_src_self -= 1;
+            self.data[idx_dest] = self.data[idx_src_self];
+        }
+        for _ in 0..length {
+            idx_dest -= 1;
+            idx_src_tensor -= 1;
+            self.data[idx_dest] = tensor_data[idx_src_tensor];
+        }
+        for _ in 1..count {
+            for _ in 0..spacing {
+                idx_dest -= 1;
+                idx_src_self -= 1;
+                self.data[idx_dest] = self.data[idx_src_self];
+            }
+            for _ in 0..length {
+                idx_dest -= 1;
+                idx_src_tensor -= 1;
+                self.data[idx_dest] = tensor_data[idx_src_tensor];
+            }
+        }
+        self.shape[dim] += tensor.shape()[dim];
+        self.strides = shape_to_strides(self.shape());
     }
 }
 
