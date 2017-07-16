@@ -212,3 +212,51 @@ fn tensor_insert() {
         }
     }
 }
+
+#[test]
+fn vector_extract() {
+    let v = Vector::<f64>::from_slice([5], [0.0, 1.0, 2.0, 3.0, 4.0]);   
+    assert!(v.extract([0..2]).get_raw_array() == [0.0, 1.0]);
+    assert!(v.extract([2..4]).get_raw_array() == [2.0, 3.0]);
+    assert!(v.extract([3..5]).get_raw_array() == [3.0, 4.0]);
+    assert!(v.extract([0..5]).get_raw_array() == [0.0, 1.0, 2.0, 3.0, 4.0]);
+    assert!(v.extract([5..5]).get_raw_array() == []);
+}
+
+#[test]
+fn matrix_extract() {
+    let m = Matrix::<f32>::from_slice([3,3], [0.0, 0.1, 0.2, 1.0, 1.1, 1.2, 2.0, 2.1, 2.2]);
+    assert!(m.extract([0..2,0..2]).get_raw_array() == [0.0, 0.1, 1.0, 1.1]);
+    assert!(m.extract([0..2,1..3]).get_raw_array() == [0.1, 0.2, 1.1, 1.2]);
+    assert!(m.extract([1..3,0..2]).get_raw_array() == [1.0, 1.1, 2.0, 2.1]);
+    assert!(m.extract([1..3,1..3]).get_raw_array() == [1.1, 1.2, 2.1, 2.2]);
+    assert!(m.extract([0..3,0..3]).get_raw_array() == [0.0, 0.1, 0.2, 1.0, 1.1, 1.2, 2.0, 2.1, 2.2]);
+    assert!(m.extract([0..0,0..3]).get_raw_array() == []);
+    assert!(m.extract([0..3,0..0]).get_raw_array() == []);
+}
+
+#[test]
+fn tensor_extract() {
+    let t = TensorN::<f64>::from_slice([3,3,3], 
+        [00.0, 00.1, 00.2, 01.0, 01.1, 01.2, 02.0, 02.1, 02.2, 
+         10.0, 10.1, 10.2, 11.0, 11.1, 11.2, 12.0, 12.1, 12.2, 
+         20.0, 20.1, 20.2, 21.0, 21.1, 21.2, 22.0, 22.1, 22.2]);
+
+    assert!(t.extract([0..2,0..2,0..2]).get_raw_array() == [0.0, 0.1, 1.0, 1.1, 10.0, 10.1, 11.0, 11.1]);
+    assert!(t.extract([0..2,0..2,1..3]).get_raw_array() == [0.1, 0.2, 1.1, 1.2, 10.1, 10.2, 11.1, 11.2]);
+    assert!(t.extract([0..2,1..3,0..2]).get_raw_array() == [1.0, 1.1, 2.0, 2.1, 11.0, 11.1, 12.0, 12.1]);
+    assert!(t.extract([0..2,1..3,1..3]).get_raw_array() == [1.1, 1.2, 2.1, 2.2, 11.1, 11.2, 12.1, 12.2]);
+    assert!(t.extract([1..3,0..2,0..2]).get_raw_array() == [10.0, 10.1, 11.0, 11.1, 20.0, 20.1, 21.0, 21.1]);
+    assert!(t.extract([1..3,0..2,1..3]).get_raw_array() == [10.1, 10.2, 11.1, 11.2, 20.1, 20.2, 21.1, 21.2]);
+    assert!(t.extract([1..3,1..3,0..2]).get_raw_array() == [11.0, 11.1, 12.0, 12.1, 21.0, 21.1, 22.0, 22.1]);
+    assert!(t.extract([1..3,1..3,1..3]).get_raw_array() == [11.1, 11.2, 12.1, 12.2, 21.1, 21.2, 22.1, 22.2]);
+    assert!(t.extract([0..3,0..3,0..3]).get_raw_array() == [00.0, 00.1, 00.2, 01.0, 01.1, 01.2, 02.0, 02.1, 02.2, 
+                                                            10.0, 10.1, 10.2, 11.0, 11.1, 11.2, 12.0, 12.1, 12.2, 
+                                                            20.0, 20.1, 20.2, 21.0, 21.1, 21.2, 22.0, 22.1, 22.2]);
+    assert!(t.extract([0..3,0..3,0..0]).get_raw_array() == []);
+    assert!(t.extract([0..3,0..0,0..3]).get_raw_array() == []);
+    assert!(t.extract([0..0,0..3,0..3]).get_raw_array() == []);
+    assert!(t.extract([0..3,0..3,3..3]).get_raw_array() == []);
+    assert!(t.extract([0..3,3..3,0..3]).get_raw_array() == []);
+    assert!(t.extract([3..3,0..3,0..3]).get_raw_array() == []);
+}

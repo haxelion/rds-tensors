@@ -1,6 +1,6 @@
 use std::iter::repeat;
 use std::borrow::{Borrow,BorrowMut};
-use std::ops::{Index, IndexMut};
+use std::ops::{Index, IndexMut, Range};
 
 pub mod types;
 pub mod tindex;
@@ -63,6 +63,8 @@ pub trait Tensor<T: RDSTyped> : Sized {
     }
 
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W);
+
+    fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self;
 }
 
 fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
@@ -157,7 +159,7 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
         assert!(dim == 0, "Vector::insert(): insertion dimension should be 0");
         assert!(pos <= self.shape[0], "Vector::insert(): insertion position is out of bound");
-        assert!(tensor.dim() == 1 , "Vector::insert(): tensor to insert is not one dimensional");
+        assert!(tensor.dim() == 1 , "Vector::insert(): tensor to insert is not uni-dimensional");
         // Make self the right size
         self.data.reserve(tensor.size());
         // Write the extended part coming from tensor
@@ -173,6 +175,13 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
             self.data[i] = tensor_data[i-pos];
         }
         self.shape[0] += tensor.size();
+    }
+
+    fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
+        let bounds = bounds.as_ref();
+        assert!(bounds.len() == 1, "Vector::extract(): bounds should be uni-dimensional");
+        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::extract(): bounds is out of range");
+        return Vector::<T>::from_slice([bounds[0].end - bounds[0].start], &self.data[bounds[0].clone()]);
     }
 }
 
@@ -336,6 +345,26 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         self.shape[dim] += tensor.shape()[dim];
         self.strides = shape_to_strides(self.shape());
     }
+
+    fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
+        let bounds = bounds.as_ref();
+        assert!(bounds.len() == 2, "Matrix::extract(): bounds should be two dimensional");
+        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Matrix::extract(): bounds is out of range");
+        assert!(bounds[1].start <= self.shape[1] && bounds[1].end <= self.shape[1], "Matrix::extract(): bounds is out of range");
+        assert!(bounds[0].start <= bounds[0].end, "Matrix::extract(): range start is after range end");
+        assert!(bounds[1].start <= bounds[1].end, "Matrix::extract(): range start is after range end");
+        // New exact allocation
+        let mut new_data = Vec::<T>::with_capacity((bounds[0].end - bounds[0].start) * (bounds[1].end - bounds[1].start));
+        // Striding parameters
+        let mut idx_src = bounds[0].start * self.strides[0] + bounds[1].start;
+        let length = bounds[1].end - bounds[1].start;
+        // Extract row by row
+        for _ in bounds[0].clone() {
+            new_data.extend_from_slice(&self.data[idx_src..idx_src+length]);
+            idx_src += self.strides[0];
+        }
+        return Matrix::<T>::from_boxed_slice([bounds[0].end - bounds[0].start, bounds[1].end - bounds[1].start], new_data.into_boxed_slice());
+    }
 }
 
 impl<I,T> Index<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
@@ -371,6 +400,7 @@ pub struct TensorN<T: RDSTyped> {
 impl<T: RDSTyped> Tensor<T> for TensorN<T> {
     fn from_scalar<R: AsRef<[usize]>>(shape: R, s: T) -> Self {
         let shape = shape.as_ref();
+        assert!(shape.len() > 0, "TensorN::from_scalar(): shape should have a least one dimension");
         let strides = shape_to_strides(shape);
         let size = strides[0] * shape[0];
         let data: Vec<T> = repeat(s).take(size).collect();
@@ -396,6 +426,7 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
 
     fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
         let shape = shape.as_ref();
+        assert!(shape.len() > 0, "TensorN::from_boxed_slice(): shape should have a least one dimension");
         let strides = shape_to_strides(shape);
         assert!(strides[0] * shape[0] == data.len(), "TensorN::from_boxed_slice(): provided data and shape does not have the same number of elements");
         TensorN {
@@ -484,6 +515,46 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         }
         self.shape[dim] += tensor.shape()[dim];
         self.strides = shape_to_strides(self.shape());
+    }
+
+    fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
+        let bounds = bounds.as_ref();
+        assert!(bounds.len() == self.dim(), "TensorN::extract(): bounds and self have different dimensionality");
+        for i in 0..self.dim() {
+            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::extract(): bounds is out of range");
+            assert!(bounds[i].start <= bounds[i].end, "TensorN::extract(): range start is after range end");
+        }
+        let size = bounds.iter().fold(1usize, |acc, b| acc * (b.end - b.start));
+        let mut new_data = Vec::<T>::with_capacity(size);
+        if size > 0 {
+            //let mut new_strides = shape_to_strides(&new_shape);
+            let mut idx: Vec<usize> = bounds.iter().map(|b| b.start).collect();
+            let length = bounds[self.dim()-1].end - bounds[self.dim()-1].start;
+            // Extract row by row
+            loop {
+                let start_pos = idx.to_pos(&self.shape[..], &self.strides[..]);
+                new_data.extend_from_slice(&self.data[start_pos..start_pos+length]);
+                // Row order increment but within bounds
+                // Start from the before last dimension (because we do row by row copy)
+                let mut i = self.dim()-1; 
+                while i > 0 {
+                    idx[i-1] += 1;
+                    if idx[i-1] >= bounds[i-1].end {
+                        idx[i-1] = bounds[i-1].start;
+                        i -= 1;
+                    }
+                    else {
+                        break;
+                    }
+                }
+                // Complete overflow of the idx, we inserted everything
+                if i == 0 {
+                    break;
+                }
+            }
+        }
+        let new_shape : Vec<usize> = bounds.iter().map(|b| b.end - b.start).collect();
+        return TensorN::<T>::from_boxed_slice(new_shape, new_data.into_boxed_slice());
     }
 }
 
