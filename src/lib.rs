@@ -1,5 +1,6 @@
 use std::iter::repeat;
 use std::borrow::{Borrow,BorrowMut};
+use std::fmt;
 use std::ops::{Index, IndexMut, Range};
 
 pub mod types;
@@ -65,6 +66,8 @@ pub trait Tensor<T: RDSTyped> : Sized {
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W);
 
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self;
+
+    fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R);
 }
 
 fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
@@ -180,8 +183,22 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
         let bounds = bounds.as_ref();
         assert!(bounds.len() == 1, "Vector::extract(): bounds should be uni-dimensional");
-        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::extract(): bounds is out of range");
+        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::extract(): bounds are out of range");
+        assert!(bounds[0].start <= bounds[0].end, "Vector::extract(): range start is after range end");
         return Vector::<T>::from_slice([bounds[0].end - bounds[0].start], &self.data[bounds[0].clone()]);
+    }
+
+    fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R) {
+        let bounds = bounds.as_ref();
+        assert!(bounds.len() == 1, "Vector::remove(): bounds should be uni-dimensional");
+        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::remove(): bounds are out of range");
+        assert!(bounds[0].start <= bounds[0].end, "Vector::remove(): range start is after range end");
+        let delta = bounds[0].end - bounds[0].start;
+        for i in bounds[0].end..self.shape[0] {
+            self.data[i - delta] = self.data[i]
+        }
+        self.shape[0] -= delta;
+        self.data.truncate(self.shape[0]);
     }
 }
 
@@ -200,6 +217,19 @@ impl<I,T> IndexMut<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
         let i = i.as_ref();
         assert!(i.len() == 1, "Vector::index(): provided index_mut has more than one dimension");
         return &mut self.data[i[0]];
+    }
+}
+
+impl<T: RDSTyped> fmt::Display for Vector<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[")?;
+        for i in 0..self.shape[0] {
+            write!(f, "{}", self.data[i])?;
+            if i != self.shape[0]-1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, "]")
     }
 }
 
@@ -250,7 +280,7 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
 
     fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape has more than two dimensions");
+        assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape is not two dimensional");
         assert!(shape[0] * shape[1] == data.len(), "Matrix::from_boxed_slice(): provided data and shape does not have the same number of elements");
         Matrix {
             data: data.into_vec(),
@@ -317,29 +347,29 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
             _ => unreachable!()
         };
         // Back to front zipping
-        let mut idx_dest = self.data.len();
+        let mut idx_dst = self.data.len();
         let mut idx_src_tensor = tensor.size();
         let tensor_data = tensor.get_raw_array();
         for _ in 0..offset {
-            idx_dest -= 1;
+            idx_dst -= 1;
             idx_src_self -= 1;
-            self.data[idx_dest] = self.data[idx_src_self];
+            self.data[idx_dst] = self.data[idx_src_self];
         }
         for _ in 0..length {
-            idx_dest -= 1;
+            idx_dst -= 1;
             idx_src_tensor -= 1;
-            self.data[idx_dest] = tensor_data[idx_src_tensor];
+            self.data[idx_dst] = tensor_data[idx_src_tensor];
         }
         for _ in 1..count {
             for _ in 0..spacing {
-                idx_dest -= 1;
+                idx_dst -= 1;
                 idx_src_self -= 1;
-                self.data[idx_dest] = self.data[idx_src_self];
+                self.data[idx_dst] = self.data[idx_src_self];
             }
             for _ in 0..length {
-                idx_dest -= 1;
+                idx_dst -= 1;
                 idx_src_tensor -= 1;
-                self.data[idx_dest] = tensor_data[idx_src_tensor];
+                self.data[idx_dst] = tensor_data[idx_src_tensor];
             }
         }
         self.shape[dim] += tensor.shape()[dim];
@@ -349,8 +379,8 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
         let bounds = bounds.as_ref();
         assert!(bounds.len() == 2, "Matrix::extract(): bounds should be two dimensional");
-        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Matrix::extract(): bounds is out of range");
-        assert!(bounds[1].start <= self.shape[1] && bounds[1].end <= self.shape[1], "Matrix::extract(): bounds is out of range");
+        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Matrix::extract(): bounds are out of range");
+        assert!(bounds[1].start <= self.shape[1] && bounds[1].end <= self.shape[1], "Matrix::extract(): bounds are out of range");
         assert!(bounds[0].start <= bounds[0].end, "Matrix::extract(): range start is after range end");
         assert!(bounds[1].start <= bounds[1].end, "Matrix::extract(): range start is after range end");
         // New exact allocation
@@ -364,6 +394,48 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
             idx_src += self.strides[0];
         }
         return Matrix::<T>::from_boxed_slice([bounds[0].end - bounds[0].start, bounds[1].end - bounds[1].start], new_data.into_boxed_slice());
+    }
+
+    fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R) {
+        let bounds = bounds.as_ref();
+        let mut removed_dim: Option<usize> = None;
+        assert!(bounds.len() == 2, "Matrix::remove(): bounds should be two dimensional");
+        for i in 0..2 {
+            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "Matrix::remove(): bounds are out of range");
+            assert!(bounds[i].start <= bounds[i].end, "Matrix::remove(): range start is after range end");
+            if (bounds[i].end - bounds[i].start) != self.shape[i] {
+                assert!(removed_dim.is_none(), "Matrix::remove(): bounds should match all dimensions but one");
+                removed_dim = Some(i);
+            }
+        }
+        assert!(removed_dim.is_some(), "Matrix::remove(): cannot remove the entire matrix");
+        let removed_dim = removed_dim.unwrap();
+        // Front to back unzipping parameter init
+        let length = bounds[1].end - bounds[1].start;
+        let count = bounds[0].end - bounds[0].start;
+        let spacing = self.strides[0] - length;
+        let offset = bounds[0].start * self.strides[0] + bounds[1].start * self.strides[1];
+        // Front to back in-place unzipping
+        let mut idx_dst = offset;
+        let mut idx_src = offset + length;
+        for _ in 1..count {
+            for _ in 0..spacing {
+                self.data[idx_dst] = self.data[idx_src];
+                idx_dst += 1;
+                idx_src += 1;
+            }
+            for _ in 0..length {
+                idx_src += 1;
+            }
+        }
+        while idx_src < self.data.len() {
+            self.data[idx_dst] = self.data[idx_src];
+            idx_dst += 1;
+            idx_src += 1;
+        }
+        self.shape[removed_dim] -= bounds[removed_dim].end - bounds[removed_dim].start;
+        self.strides = shape_to_strides(self.shape());
+        self.data.truncate(self.shape[0] * self.shape[1]);
     }
 }
 
@@ -384,6 +456,28 @@ impl<I,T> IndexMut<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
         assert!(i.len() == 2, "Matrix::index_mut(): provided index is not two dimensionsal");
         let pos = i.to_pos(self.shape(), self.strides());
         return &mut self.data[pos];
+    }
+}
+
+impl<T: RDSTyped> fmt::Display for Matrix<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[")?;
+        for i in 0..self.shape[0] {
+            write!(f, "\t[")?;
+            for j in 0..self.shape[1] {
+                write!(f, "{}", self[[i,j]])?;
+                if j != self.shape[1]-1 {
+                    write!(f, ", ")?;
+                }
+            }
+            if i != self.shape[0]-1 {
+                writeln!(f, "],")?;
+            }
+            else {
+                writeln!(f, "]")?;
+            }
+        }
+        write!(f, "]")
     }
 }
 
@@ -483,34 +577,34 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
             self.data.push(T::cast_from(0u8));
         }
         // Back to front zipping parameter init
-        let length = tensor.shape()[dim..].iter().fold(1usize, |acc, &x| acc*x);
-        let count = tensor.shape()[..dim].iter().fold(1usize, |acc, &x| acc*x);
-        let spacing = self.shape[dim..].iter().fold(1usize, |acc, &x| acc*x);
-        let offset = (self.shape[dim] - pos) * self.shape[dim+1..].iter().fold(1usize, |acc, &x| acc*x);
+        let length = tensor.shape()[dim..].iter().fold(1usize, |acc, x| acc*x);
+        let count = tensor.shape()[..dim].iter().fold(1usize, |acc, x| acc*x);
+        let spacing = self.shape[dim..].iter().fold(1usize, |acc, x| acc*x);
+        let offset = (self.shape[dim] - pos) * self.shape[dim+1..].iter().fold(1usize, |acc, x| acc*x);
         // Back to front zipping
-        let mut idx_dest = self.data.len();
+        let mut idx_dst = self.data.len();
         let mut idx_src_tensor = tensor.size();
         let tensor_data = tensor.get_raw_array();
         for _ in 0..offset {
-            idx_dest -= 1;
+            idx_dst -= 1;
             idx_src_self -= 1;
-            self.data[idx_dest] = self.data[idx_src_self];
+            self.data[idx_dst] = self.data[idx_src_self];
         }
         for _ in 0..length {
-            idx_dest -= 1;
+            idx_dst -= 1;
             idx_src_tensor -= 1;
-            self.data[idx_dest] = tensor_data[idx_src_tensor];
+            self.data[idx_dst] = tensor_data[idx_src_tensor];
         }
         for _ in 1..count {
             for _ in 0..spacing {
-                idx_dest -= 1;
+                idx_dst -= 1;
                 idx_src_self -= 1;
-                self.data[idx_dest] = self.data[idx_src_self];
+                self.data[idx_dst] = self.data[idx_src_self];
             }
             for _ in 0..length {
-                idx_dest -= 1;
+                idx_dst -= 1;
                 idx_src_tensor -= 1;
-                self.data[idx_dest] = tensor_data[idx_src_tensor];
+                self.data[idx_dst] = tensor_data[idx_src_tensor];
             }
         }
         self.shape[dim] += tensor.shape()[dim];
@@ -521,7 +615,7 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         let bounds = bounds.as_ref();
         assert!(bounds.len() == self.dim(), "TensorN::extract(): bounds and self have different dimensionality");
         for i in 0..self.dim() {
-            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::extract(): bounds is out of range");
+            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::extract(): bounds are out of range");
             assert!(bounds[i].start <= bounds[i].end, "TensorN::extract(): range start is after range end");
         }
         let size = bounds.iter().fold(1usize, |acc, b| acc * (b.end - b.start));
@@ -556,6 +650,48 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         let new_shape : Vec<usize> = bounds.iter().map(|b| b.end - b.start).collect();
         return TensorN::<T>::from_boxed_slice(new_shape, new_data.into_boxed_slice());
     }
+
+    fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R) {
+        let bounds = bounds.as_ref();
+        let mut removed_dim: Option<usize> = None;
+        assert!(bounds.len() == self.dim(), "TensorN::remove(): bounds and self should have the same dimensionality");
+        for i in 0..self.dim() {
+            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::remove(): bounds are out of range");
+            assert!(bounds[i].start <= bounds[i].end, "TensorN::remove(): range start is after range end");
+            if (bounds[i].end - bounds[i].start) != self.shape[i] {
+                assert!(removed_dim.is_none(), "TensorN::remove(): bounds should match all dimensions but one");
+                removed_dim = Some(i);
+            }
+        }
+        assert!(removed_dim.is_some(), "TensorN::remove(): cannot remove the entire tensor");
+        let removed_dim = removed_dim.unwrap();
+        // Front to back unzipping parameter init
+        let length = bounds[removed_dim..].iter().fold(1usize, |acc, x| acc*(x.end - x.start));
+        let count = bounds[..removed_dim].iter().fold(1usize, |acc, x| acc*(x.end - x.start));
+        let spacing = self.shape[removed_dim..].iter().fold(1usize, |acc, x| acc * x) - length;
+        let offset = bounds.iter().zip(self.strides.iter()).fold(0usize, |acc, (b, s)| acc + s * b.start);
+        // Front to back unzipping
+        let mut idx_dst = offset;
+        let mut idx_src = offset + length;
+        for _ in 1..count {
+            for _ in 0..spacing {
+                self.data[idx_dst] = self.data[idx_src];
+                idx_dst += 1;
+                idx_src += 1;
+            }
+            for _ in 0..length {
+                idx_src += 1;
+            }
+        }
+        while idx_src < self.data.len() {
+            self.data[idx_dst] = self.data[idx_src];
+            idx_dst += 1;
+            idx_src += 1;
+        }
+        self.shape[removed_dim] -= bounds[removed_dim].end - bounds[removed_dim].start;
+        self.strides = shape_to_strides(self.shape());
+        self.data.truncate(self.shape.iter().fold(1usize, |acc, x| acc * x));
+    }
 }
 
 impl<I,T> Index<I> for TensorN<T> where I: AsRef<[usize]>, T: RDSTyped {
@@ -575,6 +711,86 @@ impl<I,T> IndexMut<I> for TensorN<T> where I: AsRef<[usize]>, T: RDSTyped {
         assert!(i.len() == self.shape.len(), "TensorN::index(): provided index and this tensor have a different number of dimensions");
         let pos = i.to_pos(self.shape(), self.strides());
         return &mut self.data[pos];
+    }
+}
+
+impl<T: RDSTyped> fmt::Display for TensorN<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut index: Vec<usize> = repeat(0).take(self.dim()).collect();
+        // Down the braces
+        for i in 0..self.dim() {
+            for _j in 0..i {
+                write!(f, "\t")?;
+            }
+            if i != self.dim() - 1 {
+                writeln!(f, "[")?;
+            }
+            else {
+                write!(f, "[")?;
+            }
+        }
+        loop {
+            // Print one element
+            write!(f, "{}", self.data[index.to_pos(&self.shape, &self.strides)])?;
+            // Index increment
+            let mut i = self.dim();
+            while i > 0 {
+                index[i-1] += 1;
+                if index[i-1] >= self.shape[i-1] {
+                    index[i-1] = 0;
+                    i -= 1;
+                }
+                else {
+                    break;
+                }
+            }
+            // End of the tensor, break out of the loop
+            if i == 0 {
+                break;
+            }
+            // If we overflow, print some braces
+            if i < self.dim() {
+                // Up the braces
+                for j in 0..(self.dim() - i) {
+                    // No tab for the first row
+                    if j > 0 {
+                        for _k in 0..(self.dim() - j - 1) {
+                            write!(f, "\t")?;
+                        }
+                    }
+                    if j == self.dim() - i - 1 {
+                        writeln!(f, "],")?;
+                    }
+                    else {
+                        writeln!(f, "]")?;
+                    }
+                }
+                // Down the braces
+                for j in i..self.dim() {
+                    for _k in 0..j {
+                        write!(f, "\t")?;
+                    }
+                    if j != self.dim() - 1 {
+                        writeln!(f, "[")?;
+                    }
+                    else {
+                        write!(f, "[")?;
+                    }
+                }
+            }
+            else {
+                write!(f, ", ")?;
+            }
+        }
+        for i in 0..self.dim() {
+            if i > 0 {
+                for _j in 0..(self.dim() - i - 1) {
+                    write!(f, "\t")?;
+                }
+            }
+            writeln!(f, "]")?;
+        }
+        return Ok(());
     }
 }
 
