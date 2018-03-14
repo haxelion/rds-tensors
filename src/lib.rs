@@ -68,6 +68,26 @@ pub trait Tensor<T: RDSTyped> : Sized {
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self;
 
     fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R);
+
+    fn right_split(&mut self, dim: usize, pos: usize) -> Self {
+        assert!(dim < self.dim(), "TensorN::right_split(): splitting dimension is invalid");
+        assert!(pos <= self.shape()[dim], "TensorN::right_split(): splitting position is out of bound");
+        let mut bounds: Vec<Range<usize>> = self.shape().iter().map(|&x| 0..x).collect();
+        bounds[dim].start = pos;
+        let right = self.extract(&bounds);
+        self.remove(&bounds);
+        return right;
+    }
+
+    fn left_split(&mut self, dim: usize, pos: usize) -> Self {
+        assert!(dim < self.dim(), "TensorN::left_split(): splitting dimension is invalid");
+        assert!(pos <= self.shape()[dim], "TensorN::left_split(): splitting position is out of bound");
+        let mut bounds: Vec<Range<usize>> = self.shape().iter().map(|&x| 0..x).collect();
+        bounds[dim].end = pos;
+        let left = self.extract(&bounds);
+        self.remove(&bounds);
+        return left;
+    }
 }
 
 fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
