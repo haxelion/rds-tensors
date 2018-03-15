@@ -70,8 +70,8 @@ pub trait Tensor<T: RDSTyped> : Sized {
     fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R);
 
     fn right_split(&mut self, dim: usize, pos: usize) -> Self {
-        assert!(dim < self.dim(), "TensorN::right_split(): splitting dimension is invalid");
-        assert!(pos <= self.shape()[dim], "TensorN::right_split(): splitting position is out of bound");
+        debug_assert!(dim < self.dim(), "TensorN::right_split(): splitting dimension is invalid");
+        debug_assert!(pos <= self.shape()[dim], "TensorN::right_split(): splitting position is out of bound");
         let mut bounds: Vec<Range<usize>> = self.shape().iter().map(|&x| 0..x).collect();
         bounds[dim].start = pos;
         let right = self.extract(&bounds);
@@ -80,14 +80,16 @@ pub trait Tensor<T: RDSTyped> : Sized {
     }
 
     fn left_split(&mut self, dim: usize, pos: usize) -> Self {
-        assert!(dim < self.dim(), "TensorN::left_split(): splitting dimension is invalid");
-        assert!(pos <= self.shape()[dim], "TensorN::left_split(): splitting position is out of bound");
+        debug_assert!(dim < self.dim(), "TensorN::left_split(): splitting dimension is invalid");
+        debug_assert!(pos <= self.shape()[dim], "TensorN::left_split(): splitting position is out of bound");
         let mut bounds: Vec<Range<usize>> = self.shape().iter().map(|&x| 0..x).collect();
         bounds[dim].end = pos;
         let left = self.extract(&bounds);
         self.remove(&bounds);
         return left;
     }
+
+    fn transpose(&mut self);
 }
 
 fn shape_to_strides(shape: &[usize]) -> Vec<usize> {
@@ -113,7 +115,7 @@ pub struct Vector<T: RDSTyped> {
 impl<T: RDSTyped> Tensor<T> for Vector<T> {
     fn from_scalar<R: AsRef<[usize]>>(shape: R, s: T) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() == 1, "Vector::from_scalar(): provided shape has more than one dimension");
+        debug_assert!(shape.len() == 1, "Vector::from_scalar(): provided shape has more than one dimension");
         let data: Vec<T> = repeat(s).take(shape[0]).collect();
         Vector {
             data: data,
@@ -127,7 +129,7 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     }
 
     fn from_tensor<W: Tensor<S>, S: RDSTyped + CastTo<T>>(tensor: &W) -> Self {
-        assert!(tensor.effective_dim() <= 1,  "Vector::from_tensor(): provided tensor has more than one non-unit dimension");
+        debug_assert!(tensor.effective_dim() <= 1,  "Vector::from_tensor(): provided tensor has more than one non-unit dimension");
         let data: Vec<T> = tensor.get_raw_array().iter().map(|&i| i.cast_to()).collect();
         Vector {
             shape: vec![data.len()],
@@ -138,8 +140,8 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
 
     fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() == 1, "Vector::from_boxed_slice(): provided shape has more than one dimension");
-        assert!(shape[0] == data.len(), "Vector::from_boxed_slice(): provided shape and slice do not have the same number of elements");
+        debug_assert!(shape.len() == 1, "Vector::from_boxed_slice(): provided shape has more than one dimension");
+        debug_assert!(shape[0] == data.len(), "Vector::from_boxed_slice(): provided shape and slice do not have the same number of elements");
         Vector {
             shape: vec![data.len()],
             data: data.into_vec(),
@@ -180,9 +182,9 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
     }
 
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
-        assert!(dim == 0, "Vector::insert(): insertion dimension should be 0");
-        assert!(pos <= self.shape[0], "Vector::insert(): insertion position is out of bound");
-        assert!(tensor.dim() == 1 , "Vector::insert(): tensor to insert is not uni-dimensional");
+        debug_assert!(dim == 0, "Vector::insert(): insertion dimension should be 0");
+        debug_assert!(pos <= self.shape[0], "Vector::insert(): insertion position is out of bound");
+        debug_assert!(tensor.dim() == 1 , "Vector::insert(): tensor to insert is not uni-dimensional");
         // Make self the right size
         self.data.reserve(tensor.size());
         // Write the extended part coming from tensor
@@ -202,23 +204,27 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
 
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
         let bounds = bounds.as_ref();
-        assert!(bounds.len() == 1, "Vector::extract(): bounds should be uni-dimensional");
-        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::extract(): bounds are out of range");
-        assert!(bounds[0].start <= bounds[0].end, "Vector::extract(): range start is after range end");
+        debug_assert!(bounds.len() == 1, "Vector::extract(): bounds should be uni-dimensional");
+        debug_assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::extract(): bounds are out of range");
+        debug_assert!(bounds[0].start <= bounds[0].end, "Vector::extract(): range start is after range end");
         return Vector::<T>::from_slice([bounds[0].end - bounds[0].start], &self.data[bounds[0].clone()]);
     }
 
     fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R) {
         let bounds = bounds.as_ref();
-        assert!(bounds.len() == 1, "Vector::remove(): bounds should be uni-dimensional");
-        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::remove(): bounds are out of range");
-        assert!(bounds[0].start <= bounds[0].end, "Vector::remove(): range start is after range end");
+        debug_assert!(bounds.len() == 1, "Vector::remove(): bounds should be uni-dimensional");
+        debug_assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::remove(): bounds are out of range");
+        debug_assert!(bounds[0].start <= bounds[0].end, "Vector::remove(): range start is after range end");
         let delta = bounds[0].end - bounds[0].start;
         for i in bounds[0].end..self.shape[0] {
             self.data[i - delta] = self.data[i]
         }
         self.shape[0] -= delta;
         self.data.truncate(self.shape[0]);
+    }
+
+    fn transpose(&mut self) {
+        debug_assert!(false, "Vector::transpose(): transposition of a vector has no effect");
     }
 }
 
@@ -227,7 +233,7 @@ impl<I,T> Index<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
 
     fn index(&self, i: I) -> &T {
         let i = i.as_ref();
-        assert!(i.len() == 1, "Vector::index(): provided index has more than one dimension");
+        debug_assert!(i.len() == 1, "Vector::index(): provided index has more than one dimension");
         return &self.data[i[0]];
     }
 }
@@ -235,7 +241,7 @@ impl<I,T> Index<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
 impl<I,T> IndexMut<I> for Vector<T> where I: AsRef<[usize]>, T: RDSTyped {
     fn index_mut(&mut self, i: I) -> &mut T {
         let i = i.as_ref();
-        assert!(i.len() == 1, "Vector::index(): provided index_mut has more than one dimension");
+        debug_assert!(i.len() == 1, "Vector::index(): provided index_mut has more than one dimension");
         return &mut self.data[i[0]];
     }
 }
@@ -266,7 +272,7 @@ pub struct Matrix<T: RDSTyped> {
 impl<T: RDSTyped> Tensor<T> for Matrix<T> {
     fn from_scalar<R: AsRef<[usize]>>(shape: R, s: T) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() == 2, "Matrix::from_scalar(): provided shape is not two dimensional");
+        debug_assert!(shape.len() == 2, "Matrix::from_scalar(): provided shape is not two dimensional");
         let data: Vec<T> = repeat(s).take(shape[0]*shape[1]).collect();
         Matrix {
             data: data,
@@ -276,7 +282,7 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
     }
 
     fn from_tensor<W: Tensor<S>, S: RDSTyped + CastTo<T>>(tensor: &W) -> Self {
-        assert!(tensor.effective_dim() <= 2, "Matrix::from_tensor(): provided tensor has more than two non-unit dimensions");
+        debug_assert!(tensor.effective_dim() <= 2, "Matrix::from_tensor(): provided tensor has more than two non-unit dimensions");
         let mut shape = Vec::<usize>::with_capacity(2);
         for l in tensor.shape() {
             if *l > 1 {
@@ -300,8 +306,8 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
 
     fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape is not two dimensional");
-        assert!(shape[0] * shape[1] == data.len(), "Matrix::from_boxed_slice(): provided data and shape does not have the same number of elements");
+        debug_assert!(shape.len() == 2, "Matrix::from_boxed_slice(): provided shape is not two dimensional");
+        debug_assert!(shape[0] * shape[1] == data.len(), "Matrix::from_boxed_slice(): provided data and shape does not have the same number of elements");
         Matrix {
             data: data.into_vec(),
             shape: shape.to_vec(),
@@ -342,11 +348,11 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
     }
 
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
-        assert!(dim <= 1, "Matrix::insert(): insertion dimension should be 0 or 1");
-        assert!(pos <= self.shape[dim], "Matrix::insert(): insertion position is out of bound");
-        assert!(tensor.dim() == 2 , "Matrix::insert(): tensor to insert is not two dimensional");
+        debug_assert!(dim <= 1, "Matrix::insert(): insertion dimension should be 0 or 1");
+        debug_assert!(pos <= self.shape[dim], "Matrix::insert(): insertion position is out of bound");
+        debug_assert!(tensor.dim() == 2 , "Matrix::insert(): tensor to insert is not two dimensional");
         // dim^1 will produce the dimension orthogonal to the insertion dimension (dim)
-        assert!(self.shape[dim^1] == tensor.shape()[dim^1], "Matrix::insert(): tensor to insert has an incompatible shape");
+        debug_assert!(self.shape[dim^1] == tensor.shape()[dim^1], "Matrix::insert(): tensor to insert has an incompatible shape");
         let mut idx_src_self = self.data.len();
         // Make self the right size
         self.data.reserve(tensor.size());
@@ -398,11 +404,11 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
 
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
         let bounds = bounds.as_ref();
-        assert!(bounds.len() == 2, "Matrix::extract(): bounds should be two dimensional");
-        assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Matrix::extract(): bounds are out of range");
-        assert!(bounds[1].start <= self.shape[1] && bounds[1].end <= self.shape[1], "Matrix::extract(): bounds are out of range");
-        assert!(bounds[0].start <= bounds[0].end, "Matrix::extract(): range start is after range end");
-        assert!(bounds[1].start <= bounds[1].end, "Matrix::extract(): range start is after range end");
+        debug_assert!(bounds.len() == 2, "Matrix::extract(): bounds should be two dimensional");
+        debug_assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Matrix::extract(): bounds are out of range");
+        debug_assert!(bounds[1].start <= self.shape[1] && bounds[1].end <= self.shape[1], "Matrix::extract(): bounds are out of range");
+        debug_assert!(bounds[0].start <= bounds[0].end, "Matrix::extract(): range start is after range end");
+        debug_assert!(bounds[1].start <= bounds[1].end, "Matrix::extract(): range start is after range end");
         // New exact allocation
         let mut new_data = Vec::<T>::with_capacity((bounds[0].end - bounds[0].start) * (bounds[1].end - bounds[1].start));
         // Striding parameters
@@ -419,16 +425,16 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
     fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R) {
         let bounds = bounds.as_ref();
         let mut removed_dim: Option<usize> = None;
-        assert!(bounds.len() == 2, "Matrix::remove(): bounds should be two dimensional");
+        debug_assert!(bounds.len() == 2, "Matrix::remove(): bounds should be two dimensional");
         for i in 0..2 {
-            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "Matrix::remove(): bounds are out of range");
-            assert!(bounds[i].start <= bounds[i].end, "Matrix::remove(): range start is after range end");
+            debug_assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "Matrix::remove(): bounds are out of range");
+            debug_assert!(bounds[i].start <= bounds[i].end, "Matrix::remove(): range start is after range end");
             if (bounds[i].end - bounds[i].start) != self.shape[i] {
-                assert!(removed_dim.is_none(), "Matrix::remove(): bounds should match all dimensions but one");
+                debug_assert!(removed_dim.is_none(), "Matrix::remove(): bounds should match all dimensions but one");
                 removed_dim = Some(i);
             }
         }
-        assert!(removed_dim.is_some(), "Matrix::remove(): cannot remove the entire matrix");
+        debug_assert!(removed_dim.is_some(), "Matrix::remove(): cannot remove the entire matrix");
         let removed_dim = removed_dim.unwrap();
         // Front to back unzipping parameter init
         let length = bounds[1].end - bounds[1].start;
@@ -457,6 +463,57 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         self.strides = shape_to_strides(self.shape());
         self.data.truncate(self.shape[0] * self.shape[1]);
     }
+    
+    fn transpose(&mut self) {
+        let mut init_idx = 0;
+        let mut new_shape = self.shape.clone();
+        new_shape.reverse();
+        let new_strides = shape_to_strides(&new_shape);
+        'outer: while init_idx < self.data.len() {
+            let start_idx = init_idx;
+            let mut idx = start_idx;
+            // Check walk
+            loop {
+                // Compute next transposition transformation
+                idx = (idx % self.strides[0]) * new_strides[0] + (idx / self.strides[0]);
+                // Cycled ended
+                if idx == start_idx {
+                    break;
+                }
+                // Optimization to reduce the large loop iteration numbers
+                else if idx == init_idx + 1 {
+                    init_idx += 1;
+                }
+                // This cycle goes through an idx < start_idx -> we have already gone through it
+                else if idx < start_idx {
+                    init_idx += 1;
+                    continue 'outer;
+                }
+            }
+            // Execute walk
+            idx = start_idx;
+            let mut cycle_carry = self.data[idx];
+            loop {
+                // Compute next transposition transformation
+                idx = (idx % self.strides[0]) * new_strides[0] + (idx / self.strides[0]);
+                // Swap cycle_carry <-> self.data[idx]
+                let t = self.data[idx];
+                self.data[idx] = cycle_carry;
+                cycle_carry = t;
+                // Cycled ended
+                if idx == start_idx {
+                    break;
+                }
+                // Optimization to reduce the large loop iteration numbers
+                else if idx == init_idx + 1 {
+                    init_idx += 1;
+                }
+            }
+            init_idx += 1;
+        }
+        self.shape = new_shape;
+        self.strides = new_strides;
+    }
 }
 
 impl<I,T> Index<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
@@ -464,7 +521,7 @@ impl<I,T> Index<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
 
     fn index(&self, i: I) -> &T {
         let i = i.as_ref();
-        assert!(i.len() == 2, "Matrix::index(): provided index is not two dimensional");
+        debug_assert!(i.len() == 2, "Matrix::index(): provided index is not two dimensional");
         let pos = i.to_pos(self.shape(), self.strides());
         return &self.data[pos];
     }
@@ -473,7 +530,7 @@ impl<I,T> Index<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
 impl<I,T> IndexMut<I> for Matrix<T> where I: AsRef<[usize]>, T: RDSTyped {
     fn index_mut(&mut self, i: I) -> &mut T {
         let i = i.as_ref();
-        assert!(i.len() == 2, "Matrix::index_mut(): provided index is not two dimensionsal");
+        debug_assert!(i.len() == 2, "Matrix::index_mut(): provided index is not two dimensionsal");
         let pos = i.to_pos(self.shape(), self.strides());
         return &mut self.data[pos];
     }
@@ -514,7 +571,7 @@ pub struct TensorN<T: RDSTyped> {
 impl<T: RDSTyped> Tensor<T> for TensorN<T> {
     fn from_scalar<R: AsRef<[usize]>>(shape: R, s: T) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() > 0, "TensorN::from_scalar(): shape should have a least one dimension");
+        debug_assert!(shape.len() > 0, "TensorN::from_scalar(): shape should have a least one dimension");
         let strides = shape_to_strides(shape);
         let size = strides[0] * shape[0];
         let data: Vec<T> = repeat(s).take(size).collect();
@@ -540,9 +597,9 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
 
     fn from_boxed_slice<R: AsRef<[usize]>>(shape: R, data: Box<[T]>) -> Self {
         let shape = shape.as_ref();
-        assert!(shape.len() > 0, "TensorN::from_boxed_slice(): shape should have a least one dimension");
+        debug_assert!(shape.len() > 0, "TensorN::from_boxed_slice(): shape should have a least one dimension");
         let strides = shape_to_strides(shape);
-        assert!(strides[0] * shape[0] == data.len(), "TensorN::from_boxed_slice(): provided data and shape does not have the same number of elements");
+        debug_assert!(strides[0] * shape[0] == data.len(), "TensorN::from_boxed_slice(): provided data and shape does not have the same number of elements");
         TensorN {
             data: data.into_vec(),
             shape: shape.to_vec(),
@@ -583,11 +640,11 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
     }
 
     fn insert<W: Tensor<T>>(&mut self, dim: usize, pos: usize, tensor: &W) {
-        assert!(dim < self.dim(), "TensorN::insert(): insertion dimension should be 0 or 1");
-        assert!(pos <= self.shape[dim], "TensorN::insert(): insertion position is out of bound");
-        assert!(tensor.dim() == self.dim() , "TensorN::insert(): tensor has a different dimensionality than self");
+        debug_assert!(dim < self.dim(), "TensorN::insert(): insertion dimension should be 0 or 1");
+        debug_assert!(pos <= self.shape[dim], "TensorN::insert(): insertion position is out of bound");
+        debug_assert!(tensor.dim() == self.dim() , "TensorN::insert(): tensor has a different dimensionality than self");
         for i in 0..self.shape.len() {
-            assert!((dim == i) || (self.shape[i] == tensor.shape()[i]), "TensorN::insert(): tensor shape doesn't match with self shape in the non-insertion dimensions");
+            debug_assert!((dim == i) || (self.shape[i] == tensor.shape()[i]), "TensorN::insert(): tensor shape doesn't match with self shape in the non-insertion dimensions");
         }
 
         let mut idx_src_self = self.data.len();
@@ -633,10 +690,10 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
 
     fn extract<R: AsRef<[Range<usize>]>>(&self, bounds: R) -> Self {
         let bounds = bounds.as_ref();
-        assert!(bounds.len() == self.dim(), "TensorN::extract(): bounds and self have different dimensionality");
+        debug_assert!(bounds.len() == self.dim(), "TensorN::extract(): bounds and self have different dimensionality");
         for i in 0..self.dim() {
-            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::extract(): bounds are out of range");
-            assert!(bounds[i].start <= bounds[i].end, "TensorN::extract(): range start is after range end");
+            debug_assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::extract(): bounds are out of range");
+            debug_assert!(bounds[i].start <= bounds[i].end, "TensorN::extract(): range start is after range end");
         }
         let size = bounds.iter().fold(1usize, |acc, b| acc * (b.end - b.start));
         let mut new_data = Vec::<T>::with_capacity(size);
@@ -674,16 +731,16 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
     fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R) {
         let bounds = bounds.as_ref();
         let mut removed_dim: Option<usize> = None;
-        assert!(bounds.len() == self.dim(), "TensorN::remove(): bounds and self should have the same dimensionality");
+        debug_assert!(bounds.len() == self.dim(), "TensorN::remove(): bounds and self should have the same dimensionality");
         for i in 0..self.dim() {
-            assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::remove(): bounds are out of range");
-            assert!(bounds[i].start <= bounds[i].end, "TensorN::remove(): range start is after range end");
+            debug_assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::remove(): bounds are out of range");
+            debug_assert!(bounds[i].start <= bounds[i].end, "TensorN::remove(): range start is after range end");
             if (bounds[i].end - bounds[i].start) != self.shape[i] {
-                assert!(removed_dim.is_none(), "TensorN::remove(): bounds should match all dimensions but one");
+                debug_assert!(removed_dim.is_none(), "TensorN::remove(): bounds should match all dimensions but one");
                 removed_dim = Some(i);
             }
         }
-        assert!(removed_dim.is_some(), "TensorN::remove(): cannot remove the entire tensor");
+        debug_assert!(removed_dim.is_some(), "TensorN::remove(): cannot remove the entire tensor");
         let removed_dim = removed_dim.unwrap();
         // Front to back unzipping parameter init
         let length = bounds[removed_dim..].iter().fold(1usize, |acc, x| acc*(x.end - x.start));
@@ -712,6 +769,67 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         self.strides = shape_to_strides(self.shape());
         self.data.truncate(self.shape.iter().fold(1usize, |acc, x| acc * x));
     }
+
+    fn transpose(&mut self) {
+        let mut init_idx = 0;
+        let mut new_shape = self.shape.clone();
+        new_shape.reverse();
+        let new_strides = shape_to_strides(&new_shape);
+        'outer: while init_idx < self.data.len() {
+            let start_idx = init_idx;
+            let mut idx = start_idx;
+            // Check walk
+            loop {
+                // Compute next transposition transformation
+                let mut next_idx = 0;
+                for i in 0..self.strides.len() {
+                    next_idx += (idx / self.strides[i]) * new_strides[new_strides.len() - i - 1];
+                    idx = idx % self.strides[i];
+                }
+                idx = next_idx;
+                // Cycled ended
+                if idx == start_idx {
+                    break;
+                }
+                // Optimization to reduce the large loop iteration numbers
+                else if idx == init_idx + 1 {
+                    init_idx += 1;
+                }
+                // This cycle goes through an idx < start_idx -> we have already gone through it
+                else if idx < start_idx {
+                    init_idx += 1;
+                    continue 'outer;
+                }
+            }
+            // Execute walk
+            idx = start_idx;
+            let mut cycle_carry = self.data[idx];
+            loop {
+                // Compute next transposition transformation
+                let mut next_idx = 0;
+                for i in 0..self.strides.len() {
+                    next_idx += (idx / self.strides[i]) * new_strides[new_strides.len() - i - 1];
+                    idx = idx % self.strides[i];
+                }
+                idx = next_idx;
+                // Swap cycle_carry <-> self.data[idx]
+                let t = self.data[idx];
+                self.data[idx] = cycle_carry;
+                cycle_carry = t;
+                // Cycled ended
+                if idx == start_idx {
+                    break;
+                }
+                // Optimization to reduce the large loop iteration numbers
+                else if idx == init_idx + 1 {
+                    init_idx += 1;
+                }
+            }
+            init_idx += 1;
+        }
+        self.shape = new_shape;
+        self.strides = new_strides;
+    }
 }
 
 impl<I,T> Index<I> for TensorN<T> where I: AsRef<[usize]>, T: RDSTyped {
@@ -719,7 +837,7 @@ impl<I,T> Index<I> for TensorN<T> where I: AsRef<[usize]>, T: RDSTyped {
 
     fn index(&self, i: I) -> &T {
         let i = i.as_ref();
-        assert!(i.len() == self.shape.len(), "TensorN::index(): provided index and this tensor have a different number of dimensions");
+        debug_assert!(i.len() == self.shape.len(), "TensorN::index(): provided index and this tensor have a different number of dimensions");
         let pos = i.to_pos(self.shape(), self.strides());
         return &self.data[pos];
     }
@@ -728,7 +846,7 @@ impl<I,T> Index<I> for TensorN<T> where I: AsRef<[usize]>, T: RDSTyped {
 impl<I,T> IndexMut<I> for TensorN<T> where I: AsRef<[usize]>, T: RDSTyped {
     fn index_mut(&mut self, i: I) -> &mut T {
         let i = i.as_ref();
-        assert!(i.len() == self.shape.len(), "TensorN::index(): provided index and this tensor have a different number of dimensions");
+        debug_assert!(i.len() == self.shape.len(), "TensorN::index(): provided index and this tensor have a different number of dimensions");
         let pos = i.to_pos(self.shape(), self.strides());
         return &mut self.data[pos];
     }
