@@ -672,3 +672,47 @@ fn tensor_transpose() {
         120, 121, 122, 123,
     ]);
 }
+
+#[test]
+fn vector_assign() {
+    let mut v = Vector::<i16>::zeros([10]);
+    let v1 = Vector::<i16>::from_slice([3], [0, 1, 2]);
+    let v2 = Vector::<i16>::from_slice([4], [3, 4, 5, 6]);
+    let v3 = Vector::<i16>::from_slice([3], [7, 8, 9]);
+
+    v.assign([3..7], &v2);
+    v.assign([0..3], &v1);
+    v.assign([7..10], &v3);
+    
+    assert!(v.get_raw_array() == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+}
+
+#[test]
+fn matrix_assign() {
+    let mut m = Matrix::<i32>::zeros([3,3]);
+    let m1 = Matrix::<i32>::from_slice([1,3], [00, 01, 02]);
+    let m2 = Matrix::<i32>::from_slice([3,1], [00, 10, 20]);
+    let m3 = Matrix::<i32>::from_slice([2,2], [11, 12, 21, 22]);
+
+    m.assign([0..1,0..3], &m1);
+    m.assign([0..3,0..1], &m2);
+    m.assign([1..3,1..3], &m3);
+    
+    assert!(m.get_raw_array() == [00, 01, 02, 10, 11, 12, 20, 21, 22]);
+}
+
+#[test]
+fn tensor_assign() {
+    let mut t = TensorN::<i64>::zeros([3,3,3]);
+    let t1 = TensorN::<i64>::from_slice([1,3,3], [000, 001, 002, 010, 011, 012, 020, 021, 022]);
+    let t2 = TensorN::<i64>::from_slice([3,3,1], [000, 010, 020, 100, 110, 120, 200, 210, 220]);
+    let t3 = TensorN::<i64>::from_slice([3,1,3], [000, 001, 002, 100, 101, 102, 200, 201, 202]);
+    let t4 = TensorN::<i64>::from_slice([2,2,2], [111, 112, 121, 122, 211, 212, 221, 222]);
+
+    t.assign([0..1,0..3,0..3], &t1);
+    t.assign([0..3,0..3,0..1], &t2);
+    t.assign([0..3,0..1,0..3], &t3);
+    t.assign([1..3,1..3,1..3], &t4);
+    
+    assert!(t.get_raw_array() == [000, 001, 002, 010, 011, 012, 020, 021, 022, 100, 101, 102, 110, 111, 112, 120, 121, 122, 200, 201, 202, 210, 211, 212, 220, 221, 222]);
+}

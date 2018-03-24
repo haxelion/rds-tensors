@@ -69,6 +69,8 @@ pub trait Tensor<T: RDSTyped> : Sized {
 
     fn remove<R: AsRef<[Range<usize>]>>(&mut self, bounds: R);
 
+    fn assign<R: AsRef<[Range<usize>]>, W: Tensor<T>>(&mut self, bounds: R, tensor: &W);
+
     fn right_split(&mut self, dim: usize, pos: usize) -> Self {
         debug_assert!(dim < self.dim(), "TensorN::right_split(): splitting dimension is invalid");
         debug_assert!(pos <= self.shape()[dim], "TensorN::right_split(): splitting position is out of bound");
@@ -88,6 +90,7 @@ pub trait Tensor<T: RDSTyped> : Sized {
         self.remove(&bounds);
         return left;
     }
+
 
     fn transpose(&mut self);
 }
@@ -221,6 +224,18 @@ impl<T: RDSTyped> Tensor<T> for Vector<T> {
         }
         self.shape[0] -= delta;
         self.data.truncate(self.shape[0]);
+    }
+
+    fn assign<R: AsRef<[Range<usize>]>, W: Tensor<T>>(&mut self, bounds: R, tensor: &W) {
+        let bounds = bounds.as_ref();
+        debug_assert!(bounds.len() == 1, "Vector::assign(): bounds should be uni-dimensional");
+        debug_assert!(tensor.dim() == 1, "Vector::assign(): tensor should be uni-dimensional");
+        debug_assert!(bounds[0].end - bounds[0].start <= tensor.shape()[0], "Vector::assign(): bounds are out of range");
+        debug_assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Vector::assign(): bounds are out of range");
+        debug_assert!(bounds[0].start <= bounds[0].end, "Vector::assign(): range start is after range end");
+        for i in 0..(bounds[0].end - bounds[0].start) {
+            self.data[bounds[0].start + i] = tensor.get_raw_array()[i];
+        }
     }
 
     fn transpose(&mut self) {
@@ -462,6 +477,25 @@ impl<T: RDSTyped> Tensor<T> for Matrix<T> {
         self.shape[removed_dim] -= bounds[removed_dim].end - bounds[removed_dim].start;
         self.strides = shape_to_strides(self.shape());
         self.data.truncate(self.shape[0] * self.shape[1]);
+    }
+
+    fn assign<R: AsRef<[Range<usize>]>, W: Tensor<T>>(&mut self, bounds: R, tensor: &W) {
+        let bounds = bounds.as_ref();
+        debug_assert!(bounds.len() == 2, "Matrix::assign(): bounds should be two dimensional");
+        debug_assert!(tensor.dim() == 2, "Matrix::assign(): tensor should be two dimensional");
+        debug_assert!(bounds[0].start <= bounds[0].end, "Matrix::assign(): range start is after range end");
+        debug_assert!(bounds[1].start <= bounds[1].end, "Matrix::assign(): range start is after range end");
+        debug_assert!(bounds[0].end - bounds[0].start <= tensor.shape()[0], "Matrix::assign(): bounds are out of range");
+        debug_assert!(bounds[1].end - bounds[1].start <= tensor.shape()[1], "Matrix::assign(): bounds are out of range");
+        debug_assert!(bounds[0].start <= self.shape[0] && bounds[0].end <= self.shape[0], "Matrix::assign(): bounds are out of range");
+        debug_assert!(bounds[1].start <= self.shape[1] && bounds[1].end <= self.shape[1], "Matrix::assign(): bounds are out of range");
+        for i in 0..(bounds[0].end - bounds[0].start) {
+            let self_idx = (bounds[0].start + i) * self.strides[0];
+            let tensor_idx = i * tensor.strides()[0];
+            for j in 0..(bounds[1].end - bounds[1].start) {
+                self.data[self_idx + bounds[1].start + j] = tensor.get_raw_array()[tensor_idx + j];
+            }
+        }
     }
     
     fn transpose(&mut self) {
@@ -768,6 +802,31 @@ impl<T: RDSTyped> Tensor<T> for TensorN<T> {
         self.shape[removed_dim] -= bounds[removed_dim].end - bounds[removed_dim].start;
         self.strides = shape_to_strides(self.shape());
         self.data.truncate(self.shape.iter().fold(1usize, |acc, x| acc * x));
+    }
+
+    fn assign<R: AsRef<[Range<usize>]>, W: Tensor<T>>(&mut self, bounds: R, tensor: &W) {
+        let bounds = bounds.as_ref();
+        debug_assert!(bounds.len() == self.dim(), "TensorN::assign(): bounds should be two dimensional");
+        debug_assert!(tensor.dim() == self.dim(), "TensorN::assign(): tensor should be two dimensional");
+        for i in 0..self.dim() {
+            debug_assert!(bounds[i].start <= bounds[i].end, "TensorN::assign(): range start is after range end");
+            debug_assert!(bounds[i].end - bounds[i].start <= tensor.shape()[i], "TensorN::assign(): bounds are out of range");
+            debug_assert!(bounds[i].start <= self.shape[i] && bounds[i].end <= self.shape[i], "TensorN::assign(): bounds are out of range");
+        }
+        let bounds_shape: Vec<usize> = bounds.iter().map(|x| x.end - x.start).collect();
+        let mut tensor_idx: Vec<usize> = repeat(0).take(self.dim()).collect();
+        let mut self_idx = tensor_idx.clone();
+
+        loop {
+            for i in 0..self.dim() {
+                self_idx[i] = tensor_idx[i] + bounds[i].start;
+            }
+            self[&self_idx] = tensor.get_raw_array()[tensor_idx.to_pos(tensor.shape(), tensor.strides())];
+            tensor_idx.inc_ro(&bounds_shape);
+            if tensor_idx.is_zero() {
+                break;
+            }
+        }
     }
 
     fn transpose(&mut self) {
